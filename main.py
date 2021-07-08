@@ -39,7 +39,7 @@ def get_parser():
     parser.add_argument(
         "--config-file",
         metavar="FILE",
-        default='logs/market1501/bagtricks_R50/config.yaml',
+        default='logs/market1501/sbs_R50-ibn/config.yaml',
         help="path to config file",
     )
     parser.add_argument(
@@ -62,7 +62,7 @@ def get_parser():
     parser.add_argument(
         "--opts",
         help="Modify config options using the command-line 'KEY VALUE' pairs",
-        default=['MODEL.WEIGHTS', 'logs/market1501/bagtricks_R50/model_best.pth'],
+        default=['MODEL.WEIGHTS', 'logs/market1501/sbs_R50-ibn/model_best.pth'],
         nargs=argparse.REMAINDER,
     )
     return parser
@@ -82,18 +82,18 @@ def detector_fun(video_path, input_feat, save=False):
     detector = Detector()
     # 读取视频流
     cap = cv2.VideoCapture(video_path)
-
+    width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))  # 宽高
     # 保存视频
     if save:
         fourcc = cv2.VideoWriter_fourcc(*'XVID')  # 视频编解码器
         fps = cap.get(cv2.CAP_PROP_FPS)  # 帧数
         width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))  # 宽高
-        out = cv2.VideoWriter('result.avi', fourcc, fps, (1280, 720))  # 写入视频
+        out = cv2.VideoWriter('result.avi', fourcc, fps, (width, height))  # 写入视频
 
     ret, frame = cap.read()
     while ret:
         ret, frame = cap.read()
-        frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_NEAREST)
+        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_NEAREST)
         class_list = ['person']
         if ret:
             bboxes = detector.detect(frame, class_list)
@@ -118,15 +118,18 @@ def detector_fun(video_path, input_feat, save=False):
                 # 计算各个行人的距离，可以修改为矩阵运算
                 for ofeat in out_feats:
                     dist = np.linalg.norm(ofeat - input_feat)
+                    # 保留8位小数
+                    dist = np.around(dist, decimals=8, out=None)
                     dist_array.append(dist)
                 # 距离最小的下标
                 argmin = np.argmin(dist_array)
                 # 获取目标框
                 array_ = bboxes_temp[argmin]
                 x1, y1, x2, y2 = array_
-
-                # 只显示距离小于0.8的
-                if dist_array[argmin] <= 0.8:
+                print(dist_array)
+                # 只显示距离小于0.55的
+                mean = np.mean(dist_array)
+                if dist_array[argmin] <= (mean+0.5)/2:
                     print("距离：" + str(dist_array[argmin]))
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness=2, lineType=cv2.LINE_AA)
                     cv2.namedWindow("img", cv2.WINDOW_NORMAL)
@@ -142,25 +145,27 @@ def detector_fun(video_path, input_feat, save=False):
                     cv2.imshow("img", frame)
                     if cv2.waitKey(1) == ord('q'):
                         break
-    cap.release()
+
     out.release()
+    cap.release()
+
     cv2.destroyAllWindows()
 
 
 # 获取目标图片特征
-def target_feat(img_path):
+def target_feat(img_paths):
     # 对目标图片进行特征编码
-    if img_path:
-        if PathManager.isdir(img_path):
-            img_path = glob.glob(os.path.expanduser(img_path))
-            assert img_path, "The input path(s) was not found"
+    if img_paths:
+        np_feat = np.zeros((1, 2048))
+        for preimg in img_paths:
+            img = cv2.imread(preimg)
+            feat = demo.run_on_image(img)
+            np_feat += postprocess(feat)
 
-        img = cv2.imread(img_path)
-        feat = demo.run_on_image(img)
-        feat = postprocess(feat)
         # 保存目标图片的特征编码
         # np.save(os.path.join(args.output, os.path.basename(path).split('.')[0] + '.npy'), feat)
-        return feat
+        # 保留8位小数
+        return np.around(np_feat / len(img_paths), decimals=8, out=None)
 
 
 if __name__ == '__main__':
@@ -169,7 +174,8 @@ if __name__ == '__main__':
     demo = FeatureExtractionDemo(cfg, parallel=args.parallel)
     PathManager.mkdirs(args.output)
     # 目标图片
-    input_feat = target_feat('out/person_1.jpg')
-
+    input_feat = target_feat(['img/0001_c1s1_0_523.jpg', 'img/0001_c1s1_0_301.jpg', 'img/0001_c1s1_0_294.jpg'])
+    # input_feat = target_feat(['img/0001_c1s1_0_526.jpg', 'img/0001_c1s1_0_631.jpg'])
+    print(input_feat)
     # 对视频进行行人重识别
-    detector_fun('img/TownCentreXVID.avi', input_feat=input_feat, save=False)
+    detector_fun('img/VID_20210706_120431.mp4', input_feat=input_feat, save=True)
